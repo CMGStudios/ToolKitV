@@ -12,18 +12,34 @@ namespace ToolkitV.Models
     {
         public struct StatsData
         {
-            public int filesCount = 0;
-            public int oversizedCount = 0;
-            public float virtualSize = 0;
-            public float physicalSize = 0;
+            public int filesCount;
+            public int oversizedCount;
+            public float virtualSize;
+            public float physicalSize;
+
+            public StatsData()
+            {
+                filesCount = 0;
+                oversizedCount = 0;
+                virtualSize = 0;
+                physicalSize = 0;
+            }
         }
 
         public struct ResultsData
         {
-            public float filesSize = 0;
-            public int filesOptimized = 0;
-            public float optimizedSize = 0;
-            public float optimizedProcent = 0;
+            public float filesSize;
+            public int filesOptimized;
+            public float optimizedSize;
+            public float optimizedProcent;
+
+            public ResultsData()
+            {
+                filesSize = 0;
+                filesOptimized = 0;
+                optimizedSize = 0;
+                optimizedProcent = 0;
+            }
         }
 
         private static Texture OptimizeTexture(Texture texture, bool formatOptimization, bool downsize)
@@ -97,6 +113,45 @@ namespace ToolkitV.Models
             Process texConvertation = new();
             texConvertation.StartInfo.FileName = "Dependencies/texconv.exe";
             texConvertation.StartInfo.Arguments = $"-w {texture.Width} -h {texture.Height} -m {texture.Levels} -f {texConvFormat} -bc d temp.dds -y";
+            texConvertation.StartInfo.UseShellExecute = false;
+            texConvertation.StartInfo.CreateNoWindow = true;
+
+            texConvertation.Start();
+
+            texConvertation.WaitForExit();
+
+            dds = File.ReadAllBytes(savePath);
+            Texture tex = DDSIO.GetTexture(dds);
+
+            texture.Data = tex.Data;
+            texture.Depth = tex.Depth;
+            texture.Levels = tex.Levels;
+            texture.Format = tex.Format;
+            texture.Stride = tex.Stride;
+
+            return texture;
+        }
+
+        private static Texture FixInvalidScriptTexture(Texture texture)
+        {
+            string currentDir = Directory.GetCurrentDirectory();
+            string savePath = currentDir + "\\temp.dds";
+            byte[] dds;
+
+            try
+            {
+                dds = DDSIO.GetDDSFile(texture);
+            }
+            catch
+            {
+                return texture;
+            }
+
+            File.WriteAllBytes(savePath, dds);
+
+            Process texConvertation = new();
+            texConvertation.StartInfo.FileName = "Dependencies/texconv.exe";
+            texConvertation.StartInfo.Arguments = $"-w {texture.Width} -h {texture.Height} -m {texture.Levels} -f B8G8R8A8_UNORM temp.dds -y";
             texConvertation.StartInfo.UseShellExecute = false;
             texConvertation.StartInfo.CreateNoWindow = true;
 
@@ -241,8 +296,9 @@ namespace ToolkitV.Models
                 for (int j = 0; j < ytdFile.TextureDict.Textures.Count; j++)
                 {
                     Texture texture = ytdFile.TextureDict.Textures[j];
+                    bool isScriptTexture = texture.Name.ToLower().Contains("script_rt");
 
-                    if (texture.Width + texture.Height >= optimizeSizeValue)
+                    if (!isScriptTexture && texture.Width + texture.Height >= optimizeSizeValue)
                     {
                         if (!ytdChanged)
                         {
@@ -275,6 +331,43 @@ namespace ToolkitV.Models
                         resultsData.filesOptimized++;
 
                         ytdFile.TextureDict.Textures.data_items[j] = newTexture;
+                    }
+
+                    if (isScriptTexture)
+                    {
+                        TextureFormat format = texture.Format;
+                        if (format == TextureFormat.D3DFMT_ATI1 || format == TextureFormat.D3DFMT_ATI2 || format == TextureFormat.D3DFMT_BC7 ||
+                            format == TextureFormat.D3DFMT_DXT1 || format == TextureFormat.D3DFMT_DXT3 || format == TextureFormat.D3DFMT_DXT5)
+                        {
+                            if (!ytdChanged)
+                            {
+                                if (doBackup)
+                                {
+                                    try
+                                    {
+                                        string relativePath = Path.GetRelativePath(inputDirectory, filePath);
+                                        string[] dirs = relativePath.Split('\\');
+                                        string backupPath = backupDirectory;
+                                        for (int k = 0; k < dirs.Length - 1; k++)
+                                        {
+                                            backupPath += "\\" + dirs[k];
+
+                                            if (!Directory.Exists(backupPath))
+                                            {
+                                                Directory.CreateDirectory(backupPath);
+                                            }
+                                        }
+
+                                        File.Copy(filePath, backupPath + "\\" + fileName);
+                                    }
+                                    catch { }
+                                }
+                                ytdChanged = true;
+                            }
+
+                            Texture newTexture = FixInvalidScriptTexture(texture);
+                            ytdFile.TextureDict.Textures.data_items[j] = newTexture;
+                        }
                     }
                 }
 
